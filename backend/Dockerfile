@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Download spaCy model
 RUN python -m spacy download en_core_web_sm
 
+# Bake sentence-transformers model into the image so cold starts are instant
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 COPY . .
 
 RUN mkdir -p uploads

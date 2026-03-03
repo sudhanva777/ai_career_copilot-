@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey
-from datetime import datetime
+from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
 from app.models.base import Base
+
 
 class InterviewSession(Base):
     __tablename__ = "interview_sessions"
@@ -9,7 +11,16 @@ class InterviewSession(Base):
     analysis_id = Column(Integer, ForeignKey("analysis.analysis_id", ondelete="CASCADE"), index=True)
     target_role = Column(String)
     overall_score = Column(Float, nullable=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    analysis = relationship("AnalysisResult", back_populates="interview_sessions")
+    questions = relationship(
+        "InterviewQA",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
 
 class InterviewQA(Base):
     __tablename__ = "interview_qa"
@@ -20,3 +31,5 @@ class InterviewQA(Base):
     ideal_answer = Column(Text, nullable=True)
     similarity_score = Column(Float, nullable=True)
     llm_feedback = Column(Text, nullable=True)
+
+    session = relationship("InterviewSession", back_populates="questions")

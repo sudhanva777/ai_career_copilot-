@@ -1,13 +1,14 @@
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from app.core.config import settings
 
+# Rate limiting is always ON.
+# In development, all traffic appears from 127.0.0.1 so the shared
+# bucket is unlikely to trip; in production each client IP is distinct.
 def get_real_address(request):
-    if settings.ENVIRONMENT == "development":
-        return "127.0.0.1"
+    # Respect X-Forwarded-For when behind a reverse proxy
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
     return get_remote_address(request)
 
-limiter = Limiter(
-    key_func=get_real_address,
-    enabled=settings.ENVIRONMENT == "production"
-)
+limiter = Limiter(key_func=get_real_address)

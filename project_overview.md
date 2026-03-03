@@ -1,53 +1,110 @@
-# 🤖 AI Career Copilot - Project Overview
+## AI Career Copilot — Project Overview
 
-## 1. Project Goal & Vision
+### Project goal
+Help job seekers iterate faster by turning a resume into:
+- **ATS-style score**
+- **Detected skills**
+- **Top role matches**
+- **Actionable skill gaps**
+- **Mock interview practice + feedback**
 
-**AI Career Copilot** is designed to be a full-stack AI SaaS product that helps candidates by analyzing their resumes, matching them to job roles, and coaching them through intelligent mock interviews. The core loop consists of uploading a resume, receiving an ATS score and gap analysis, practicing via an AI interview simulator, and getting actionable feedback.
+### System architecture (current implementation)
+- **Frontend**: React + Vite + React Router, vanilla CSS UI system
+- **Backend**: FastAPI with SQLAlchemy (default DB URL points to SQLite)
+- **AI/NLP**:
+  - **Skill embeddings**: Sentence-Transformers (`all-MiniLM-L6-v2`)
+  - **NLP runtime**: spaCy (`en_core_web_sm`, must be installed up front)
+  - **Interview coach**: Ollama (Llama 3) via HTTP (`/api/generate`)
 
-## 2. Current Architecture
+```mermaid
+flowchart TB
+  FE[React UI] -->|cookies + JSON| API[FastAPI /api/v1]
+  API --> DB[(SQL DB via SQLAlchemy)]
+  API --> UP[(uploads/resumes)]
+  API --> OL[Ollama /api/generate]
+  API --> NLP[nlp_pipeline.analyze_resume]
+```
 
-The system consists of the following stack components:
+### Core modules (backend)
+- **Entry point**: `backend/app/main.py`
+  - mounts routers: `auth`, `resume`, `interview`
+  - CORS origins from `ALLOWED_ORIGINS`
+  - simple `/health` endpoint
+- **Auth**: `backend/app/api/v1/auth.py`
+  - issues JWT and stores it in an **HttpOnly cookie** named `session`
+  - `GET /auth/me` validates cookie and returns the current user
+- **Resume service**: `backend/app/api/v1/resume.py`
+  - validates file type (PDF/DOCX) and size (5MB)
+  - saves file via `backend/app/services/file_service.py`
+  - extracts text (PyMuPDF with pdfplumber fallback; python-docx for DOCX)
+  - calls `backend/app/services/ai/nlp_pipeline.py`
+  - persists `Resume` + `AnalysisResult`
+- **Interview coach**: `backend/app/api/v1/interview.py` + `backend/app/services/ai/llm_coach.py`
+  - `start`: generates interview questions (fallbacks if Ollama is unreachable)
+  - `answer`: evaluates answer via Ollama (fallback response on error)
 
-* **Frontend:** React.js, Vite, and Vanilla CSS. It uses a custom glassmorphism design system rather than Tailwind. Client-side routing is handled via React Router.
-* **Backend:** FastAPI with SQLite (`app.db`) and SQLAlchemy ORM.
-* **AI/NLP Layer:** Python libraries (`spacy`, `SentenceTransformer` scaffolding) and `httpx` API integrations for connecting to a local `Ollama` (Llama 3) LLM instance.
+### Data model (DB)
+The persisted entities are:
+- **User** (`users`)
+- **Resume** (`resumes`)
+- **AnalysisResult** (`analysis`)
+- **InterviewSession** + **InterviewQA** (`interview_sessions`, `interview_qa`)
 
-## 3. What Has Been Accomplished So Far
+### Resume upload + analysis flow
 
-The project has achieved end-to-end functionality integrating the UI with the core backend micro-services.
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant FE as Frontend
+  participant BE as FastAPI
+  participant FS as Uploads
+  participant NLP as NLP pipeline
+  participant DB as DB
 
-1. **Authentication System (Completed & Stabilized):**
-    * Backend JWT generation and HTTP-Only cookie logic via `/auth/register` and `/auth/login`.
-    * **Frontend:** Fully stabilized React AuthContext with robust, loop-free session hydration and graceful 401 unauthenticated-state handling.
-    * Secure protected routes wrapper prevents unauthenticated access to the dashboard.
+  U->>FE: Upload PDF/DOCX
+  FE->>BE: POST /api/v1/resume/upload (multipart)
+  BE->>FS: Save file (uuid_filename)
+  BE->>BE: Extract raw text (PDF/DOCX)
+  BE->>NLP: analyze_resume(raw_text)
+  NLP-->>BE: ats_score, extracted_skills, predicted_roles, gap_skills
+  BE->>DB: Persist Resume + AnalysisResult
+  BE-->>FE: { resume_id, filename, status }
+  FE->>BE: GET /api/v1/resume/analysis/{resume_id}
+  BE-->>FE: Analysis payload
+```
 
-2. **Resume Processing Pipeline (Functional):**
-    * **Upload & Parsing:** Backend routes correctly accept PDF and DOCX files (`/resume/upload`), utilizing PyMuPDF/pdfplumber for text extraction.
-    * **Frontend:** The `UploadPage.jsx`, `AnalysisPage.jsx`, and `DashboardPage.jsx` components are completely built and successfully fetching/displaying live data from the backend.
+### Interview coach flow
 
-3. **NLP Analysis Engine (Functional Prototype):**
-    * The NLP system (`nlp_pipeline.py`) currently utilizes a **mocked** exact-match keyword searching strategy against a predefined `SKILL_ONTOLOGY`.
-    * It successfully calculates a mathematical ATS score, recommends job roles, and identifies gap skills based on this mock dictionary, saving results to the database.
-    * SentenceTransformer modeling is stubbed out but not yet executing the deep semantic matching.
+```mermaid
+sequenceDiagram
+  participant FE as Frontend
+  participant BE as FastAPI
+  participant OL as Ollama
+  participant DB as DB
 
-4. **AI Interview Coach Module (Completed):**
-    * **Backend (`llm_coach.py`):** Fully integrated with a local Ollama instance. Uses candidate resume context to generate dynamic questions (`/interview/start`) and evaluates textual responses (`/interview/answer`) scoring them 0-10 with detailed LLM feedback. Includes static fallback questions if Ollama is offline.
-    * **Frontend:** The `InterviewPage.jsx` provides a slick, interactive chat-bubble UI that handles the Q&A loop autonomously and renders a final summary screen with score breakdowns.
+  FE->>BE: POST /api/v1/interview/start
+  BE->>DB: Read AnalysisResult (skills context)
+  BE->>OL: POST /api/generate (question prompt)
+  OL-->>BE: Questions JSON
+  BE->>DB: Create InterviewSession + InterviewQA rows
+  BE-->>FE: session_id + questions
 
-## 4. How It Works (The Code Flow)
+  FE->>BE: POST /api/v1/interview/answer
+  BE->>OL: POST /api/generate (evaluation prompt)
+  OL-->>BE: {score, feedback, ideal_answer}
+  BE->>DB: Persist QA result fields
+  BE-->>FE: {score, feedback, ideal_answer}
+```
 
-1. **Initialization:** `app/main.py` spins up the FastAPI application, mounts the CORS middleware matching `http://localhost:5173`, and binds the SQLite SQLAlchemy models.
-2. **Data Flow:**
-    * A user logs in via the UI. The token is stored, and the dashboard mounts, fetching past resumes and analyses.
-    * A user uploads a PDF. The file is saved and text is extracted via `pdf_utils`.
-    * The text is passed to `nlp_pipeline.analyze_resume()`, extracting exact-match skills, computing an ATS score, predicting roles, and detailing missing skills. Results are served to the React Analysis UI.
-    * To start an interview, the React frontend passes the analysis ID to the backend. The backend invokes the Ollama generation API with the candidate's context. Questions are stored in the database and sent to the UI.
-    * Upon answering, Ollama evaluates the answer vs the question context, sending feedback and a 0-10 score back to the React UI's chat interface.
+### Security & operational notes
+- **Session**: JWT stored in `session` cookie (`HttpOnly`, `SameSite=lax`).
+- **CORS**: allowed origins are controlled by `ALLOWED_ORIGINS`.
+- **Rate limiting**: SlowAPI limiter is wired in `backend/app/main.py` (enabled when `ENVIRONMENT=production`).
 
-## 5. Next Steps / Pending Work
+### Known constraints (documented, not changed here)
+- **Startup latency**: skill embeddings are computed at import time in `nlp_pipeline.py`.
+- **Database portability**: the repository includes Compose configs for Postgres, but the backend currently defaults to SQLite and does not include a Postgres driver in `backend/requirements.txt`.
 
-The foundational integration is finished. The remaining work focuses exclusively on improving AI accuracy and production-readiness.
-
-* **NLP Enhancements:** Migrate the core `nlp_pipeline.py` away from the mocked exact-match `SKILL_ONTOLOGY`. Implement the `SentenceTransformer` based semantic vector matching and train/integrate the Random Forest/SVM classifier for genuine role prediction.
-* **Production Deployment:** Shift the local SQLite database to PostgreSQL, containerize the application using Docker, and configure cloud hosting (e.g., Railway/Vercel) for public access.
-* **Performance Tuning:** Introduce Celery or Redis for background job processing, as the current resume parsing/LLM calls block the API response synchronously.
+### Where to go next
+- Align the API contract docs under `docs/engineering/` with the current runtime payloads (cookie-based auth, analysis payload shapes).
+- Production hardening: background workers for heavy analysis, observability, and DB driver + engine config for Postgres.

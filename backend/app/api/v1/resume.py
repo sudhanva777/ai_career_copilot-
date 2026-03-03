@@ -8,33 +8,61 @@ from app.models.resume import Resume
 from app.models.analysis import AnalysisResult
 from app.schemas.resume import ResumeOut, AnalysisOut
 from typing import List
-import os
+import asyncio
 from pathlib import Path
 
 router = APIRouter()
 
 MAX_SIZE = 5 * 1024 * 1024  # 5 MB
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+ALLOWED_MIME_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+# Magic bytes for supported file types
+MAGIC_BYTES = {
+    ".pdf": b"%PDF",
+    ".docx": b"PK\x03\x04",  # ZIP-based format (Office Open XML)
+}
+
+
+def _extract_text_pdf(file_path: str) -> str:
+    """Try PyMuPDF first, fall back to pdfplumber on any failure."""
+    # Attempt 1: PyMuPDF (fast, handles most PDFs)
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(file_path)
+        text = "\n".join(page.get_text() for page in doc)
+        doc.close()
+        if text.strip():
+            return text
+    except Exception:
+        pass  # Fall through to pdfplumber
+
+    # Attempt 2: pdfplumber (better for complex layouts)
+    try:
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            return "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception:
+        return ""
+
 
 def extract_text(file_path: str, ext: str) -> str:
-    """Extract raw text from PDF or DOCX."""
+    """Extract raw text from PDF or DOCX, returning empty string on failure."""
     if ext == ".pdf":
-        try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(file_path)
-            return "\n".join(page.get_text() for page in doc)
-        except ImportError:
-            # Fallback to pdfplumber
-            import pdfplumber
-            with pdfplumber.open(file_path) as pdf:
-                return "\n".join(p.extract_text() or "" for p in pdf.pages)
+        return _extract_text_pdf(file_path)
 
-    elif ext == ".docx":
-        from docx import Document
-        doc = Document(file_path)
-        return "\n".join(p.text for p in doc.paragraphs)
+    if ext == ".docx":
+        try:
+            from docx import Document
+            doc = Document(file_path)
+            return "\n".join(p.text for p in doc.paragraphs)
+        except Exception:
+            return ""
 
     return ""
+
 
 @router.post("/upload", status_code=201)
 async def upload_resume(
@@ -42,35 +70,55 @@ async def upload_resume(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    # Validate extension
+    # ── Validate extension ────────────────────────────────────────
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, detail="Invalid file type. Only PDF and DOCX allowed.")
-    
-    # Validate MIME type
-    if file.content_type not in ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+
+    # ── Validate MIME type (from Content-Type header) ─────────────
+    if file.content_type not in ALLOWED_MIME_TYPES.values():
         raise HTTPException(400, detail="Invalid content type. Only PDF and DOCX are permitted.")
 
-    # Read and validate size (Max 5MB)
+    # ── Read content ──────────────────────────────────────────────
     content = await file.read()
+
+    # ── Validate size ─────────────────────────────────────────────
     if len(content) > MAX_SIZE:
         raise HTTPException(400, detail="File too large. Maximum 5MB allowed.")
 
-    # Save file
+    if len(content) == 0:
+        raise HTTPException(400, detail="File is empty.")
+
+    # ── Validate magic bytes (prevents spoofed Content-Type) ──────
+    expected_magic = MAGIC_BYTES.get(ext, b"")
+    if expected_magic and not content.startswith(expected_magic):
+        raise HTTPException(
+            400,
+            detail="File content does not match the declared file type. Please upload a valid PDF or DOCX."
+        )
+
+    # ── Save file (UUID-only path — original name stored in DB) ───
     file_path = await save_upload_file(file.filename, content)
 
-    # Extract text + analyze (Run CPU-heavy tasks in a separate thread)
+    # ── Extract text ──────────────────────────────────────────────
     try:
-        import asyncio
         raw_text = await asyncio.to_thread(extract_text, file_path, ext)
-        analysis_data = await asyncio.to_thread(analyze_resume, raw_text)
-    except Exception as tuple_err:
-        raise HTTPException(500, detail="Failed to process document")
+    except Exception:
+        raw_text = ""
 
-    # Persist resume
+    if len(raw_text.strip()) < 50:
+        raise HTTPException(
+            422,
+            detail=(
+                "Could not extract enough text from this file. "
+                "If this is a scanned PDF (image-only), please use a text-based PDF or DOCX."
+            )
+        )
+
+    # ── Persist resume record first ───────────────────────────────
     resume = Resume(
         user_id=user_id,
-        filename=file.filename,
+        filename=file.filename,  # original name for display only
         raw_text=raw_text,
         file_path=file_path,
     )
@@ -78,7 +126,17 @@ async def upload_resume(
     db.commit()
     db.refresh(resume)
 
-    # Persist analysis
+    # ── Run NLP analysis ──────────────────────────────────────────
+    try:
+        analysis_data = await asyncio.to_thread(analyze_resume, raw_text)
+    except Exception:
+        # Analysis failed — still return the resume ID so user can retry
+        raise HTTPException(
+            500,
+            detail="Resume saved but analysis failed. Please try re-uploading."
+        )
+
+    # ── Persist analysis ──────────────────────────────────────────
     analysis = AnalysisResult(
         resume_id=resume.resume_id,
         ats_score=analysis_data["ats_score"],
@@ -103,7 +161,6 @@ def list_resumes(
     user_id: int = Depends(get_current_user_id),
 ):
     resumes = db.query(Resume).filter(Resume.user_id == user_id).all()
-    # Return field 'id' (not resume_id) to match frontend contract
     return [
         {"id": r.resume_id, "filename": r.filename, "uploaded_at": r.upload_date}
         for r in resumes
@@ -129,7 +186,7 @@ def delete_resume(
     ).delete()
     db.delete(resume)
     db.commit()
-    return None   # 204 No Content
+    return None
 
 
 @router.get("/analysis/{resume_id}", response_model=AnalysisOut)
@@ -138,7 +195,7 @@ def get_analysis(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    # Verify resume belongs to user
+    # Verify resume belongs to this user
     resume = db.query(Resume).filter(
         Resume.resume_id == resume_id,
         Resume.user_id == user_id
@@ -153,9 +210,9 @@ def get_analysis(
         raise HTTPException(404, detail="Analysis not found for this resume")
 
     return {
-        "analysis_id":       analysis.analysis_id,
-        "ats_score":         analysis.ats_score,
-        "extracted_skills":  analysis.skills_json or [],
-        "predicted_roles":   analysis.role_pred_json or [],
-        "gap_skills":        analysis.gaps_json or [],
+        "analysis_id":      analysis.analysis_id,
+        "ats_score":        analysis.ats_score,
+        "extracted_skills": analysis.skills_json or [],     # List[{skill, score}]
+        "predicted_roles":  analysis.role_pred_json or [],  # List[{role, score}]
+        "gap_skills":       analysis.gaps_json or [],        # List[str]
     }

@@ -32,13 +32,14 @@ export default function UploadPage() {
 
             if (!resumeId) throw new Error("No resume ID returned from upload");
 
-            notify('Analyzing your resume. This may take a minute...', 'info');
+            notify('Analyzing your resume. This may take a moment...', 'info');
 
-            // Poll for analysis completion
-            await pollAnalysis(resumeId);
+            // Poll until analysis is written (usually instant — same request)
+            const analysisResult = await pollAnalysis(resumeId);
 
             notify('Analysis complete!', 'success');
-            navigate('/analysis');
+            // Pass analysis data via router state to avoid a redundant fetch
+            navigate('/analysis', { state: { analysis: analysisResult } });
         } catch (err) {
             notify(err.message || 'Upload failed', 'error');
         } finally {
@@ -51,10 +52,12 @@ export default function UploadPage() {
         while (Date.now() - start < 60000) { // 60s timeout
             try {
                 const res = await getAnalysis(id);
-                if (res && res.stats) {
-                    return res; // Analysis ready
+                // Analysis is ready when we receive a valid analysis_id
+                if (res && res.analysis_id !== undefined) {
+                    return res;
                 }
             } catch (e) {
+                // 404 means analysis not written yet — keep polling
                 if (e.status !== 404) throw e;
             }
             await delay(2000);

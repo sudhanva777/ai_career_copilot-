@@ -172,7 +172,7 @@ export default function AnalysisPage() {
                             <div className="flex flex-wrap gap-8">
                                 {analysis.extracted_skills?.length > 0 ? (
                                     analysis.extracted_skills.map((skill, idx) => (
-                                        <Tag key={idx} label={skill} variant="skill" />
+                                        <Tag key={idx} label={skill.skill ?? skill} variant="skill" />
                                     ))
                                 ) : (
                                     <span className="text-text3 text-sm italic">No skills detected.</span>
