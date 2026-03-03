@@ -1,0 +1,72 @@
+version: '3.9'
+
+services:
+
+  # ── Database ─────────────────────────────────────────────────────
+  db:
+    image: postgres:15
+    container_name: copilot-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aicopilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # ── Backend ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: copilot-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-change-in-prod}
+      - JWT_ALGORITHM=HS256
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/aicopilot
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - ALLOWED_ORIGINS=http://localhost:3000,http://frontend:80
+      - UPLOAD_DIR=/app/uploads
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Frontend ─────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: copilot-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── Ollama (LLM) ─────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: copilot-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  uploads_data:
+  ollama_data:
+  pgdata:
