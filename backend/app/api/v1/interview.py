@@ -117,7 +117,7 @@ async def answer_question(
     try:
         result = await evaluate_answer(
             question=qa.question_text,
-            answer=payload.answer,
+            user_answer=payload.answer,
         )
     except RuntimeError as exc:
         detail = _fallback_error_detail(str(exc))
