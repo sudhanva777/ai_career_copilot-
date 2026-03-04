@@ -41,11 +41,12 @@ def create_tables():
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
+    engine.dispose()  # release all connections (required on Windows to delete the file)
     # Clean up test DB file
     import os
     try:
         os.remove("test_integration.db")
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         pass
 
 

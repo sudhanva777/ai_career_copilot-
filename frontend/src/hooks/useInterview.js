@@ -10,15 +10,17 @@ export function useInterview() {
     const [currentQIdx, setCurrentQIdx] = useState(0);
     const [loading, setLoading] = useState(false);
     const [roleName, setRoleName] = useState('');
+    const [overallScore, setOverallScore] = useState(null);
 
     const notify = useNotify();
 
-    const startInterview = async (targetRole, analysisId) => {
+    const startInterview = async (targetRole, analysisId, practiceMode = false) => {
         setLoading(true);
         try {
-            const data = await startSession(targetRole, analysisId);
+            const data = await startSession(targetRole, analysisId, practiceMode);
             setSession(data);
             setRoleName(targetRole);
+            setOverallScore(null);
 
             const firstQ = data.questions?.[0];
             if (firstQ) {
@@ -41,7 +43,6 @@ export function useInterview() {
 
         const currentQ = session.questions[currentQIdx];
 
-        // Add user message
         setMessages(prev => [...prev, { role: 'user', text: answerText }]);
 
         setLoading(true);
@@ -51,14 +52,17 @@ export function useInterview() {
             setScores(prev => [...prev, {
                 qNum: currentQIdx + 1,
                 question: currentQ.text,
+                category: currentQ.category || 'Technical',
                 score: data.score,
                 feedback: data.feedback,
-                ideal: data.ideal_answer
+                ideal: data.ideal_answer,
             }]);
 
-            const nextIdx = currentQIdx + 1;
+            if (data.overall_score != null) {
+                setOverallScore(data.overall_score);
+            }
 
-            // Build AI response
+            const nextIdx = currentQIdx + 1;
             let aiResponseText = `**Score:** ${data.score}/10\n\n**Feedback:** ${data.feedback}\n\n`;
 
             if (nextIdx < session.questions.length) {
@@ -85,6 +89,7 @@ export function useInterview() {
         setMessages([]);
         setScores([]);
         setCurrentQIdx(0);
+        setOverallScore(null);
     }, []);
 
     const totalScores = scores.reduce((sum, s) => sum + s.score, 0);
@@ -99,9 +104,10 @@ export function useInterview() {
         loading,
         roleName,
         avgScore,
+        overallScore,
         startInterview,
         sendAnswer,
         reset,
-        setPhase
+        setPhase,
     };
 }

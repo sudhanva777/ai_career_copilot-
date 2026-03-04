@@ -51,7 +51,7 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────
-from app.api.v1 import auth, resume, interview
+from app.api.v1 import auth, resume, interview, jobs, dashboard
 from app.models import Base
 from app.db.session import engine
 
@@ -60,6 +60,8 @@ Base.metadata.create_all(bind=engine)
 app.include_router(auth.router,      prefix="/api/v1/auth",      tags=["Auth"])
 app.include_router(resume.router,    prefix="/api/v1/resume",    tags=["Resume"])
 app.include_router(interview.router, prefix="/api/v1/interview", tags=["Interview"])
+app.include_router(jobs.router,      prefix="/api/v1/jobs",      tags=["Jobs"])
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 
 
 @app.get("/health")

@@ -13,3 +13,12 @@ export const deleteResume = (id) =>
 
 export const getAnalysis = (id) =>
     apiFetch(`/resume/analysis/${id}`);
+
+export const getRewrite = (resumeId) =>
+    apiFetch(`/resume/rewrite/${resumeId}`);
+
+export const generateRewrite = (resumeId) =>
+    apiFetch(`/resume/rewrite/${resumeId}`, { method: 'POST' });
+
+export const getHistory = () =>
+    apiFetch('/resume/history');

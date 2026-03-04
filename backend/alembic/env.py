@@ -26,6 +26,7 @@ import app.models.user
 import app.models.resume
 import app.models.analysis
 import app.models.interview
+import app.models.job_match
 
 target_metadata = Base.metadata
 

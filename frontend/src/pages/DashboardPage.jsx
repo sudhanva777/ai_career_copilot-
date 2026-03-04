@@ -1,117 +1,181 @@
-// DashboardPage.jsx — matches banking dashboard aesthetic
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listResumes, getAnalysis } from '../api/resume';
 import { useNotify } from '../hooks/useNotify';
 import { useAuth } from '../hooks/useAuth';
+import { getDashboardSummary } from '../api/dashboard';
 import Icon from '../components/ui/Icon';
+import OnboardingWizard, { useOnboarding } from '../components/common/OnboardingWizard';
+
+// ── Career Health Gauge ───────────────────────────────────────────
+function HealthGauge({ score, label }) {
+    const radius = 52;
+    const circumference = 2 * Math.PI * radius;
+    const dashoffset = circumference * (1 - score / 100);
+    const color = score >= 80 ? 'var(--green)'
+        : score >= 65 ? '#22d3ee'
+        : score >= 45 ? 'var(--gold)'
+        : 'var(--red)';
+
+    return (
+        <div style={{ position: 'relative', width: 136, height: 136, flexShrink: 0 }}>
+            <svg width={136} height={136} style={{ transform: 'rotate(-90deg)' }}>
+                <circle cx={68} cy={68} r={radius} fill="none"
+                    stroke="rgba(255,255,255,0.06)" strokeWidth={9} />
+                <circle cx={68} cy={68} r={radius} fill="none"
+                    stroke={color}
+                    strokeWidth={9}
+                    strokeDasharray={circumference}
+                    strokeDashoffset={dashoffset}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dashoffset 1.2s cubic-bezier(0.4,0,0.2,1)' }}
+                />
+            </svg>
+            <div style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 30, fontWeight: 700, color, lineHeight: 1 }}>
+                    {score}
+                </span>
+                <span style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    {label}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+// ── Activity type config ──────────────────────────────────────────
+const ACTIVITY_CONFIG = {
+    resume: { icon: 'file', color: '#a855f7', label: 'Resume Uploaded' },
+    job_match: { icon: 'target', color: '#3b82f6', label: 'Job Matched' },
+    interview: { icon: 'mic', color: '#22d3ee', label: 'Interview' },
+};
+
+// ── Priority config ───────────────────────────────────────────────
+const PRIORITY_CONFIG = {
+    high: { color: '#ef4444', dot: 'var(--red)' },
+    medium: { color: '#f59e0b', dot: 'var(--gold)' },
+    low: { color: '#3b82f6', dot: '#3b82f6' },
+};
 
 export default function DashboardPage() {
-    const [resumes, setResumes] = useState([]);
-    const [latestAnalysis, setLatestAnalysis] = useState(null);
+    const [summary, setSummary] = useState(null);
     const [loading, setLoading] = useState(true);
-
     const navigate = useNavigate();
     const notify = useNotify();
     const { user } = useAuth();
 
     useEffect(() => {
-        async function loadDashboardData() {
-            try {
-                const records = await listResumes();
-                setResumes(records || []);
-
-                if (records && records.length > 0) {
-                    const analysis = await getAnalysis(records[0].id);
-                    setLatestAnalysis(analysis);
-                }
-            } catch (err) {
-                notify(err.message || 'Failed to load dashboard data', 'error');
-            } finally {
-                setLoading(false);
-            }
-        }
-        loadDashboardData();
+        getDashboardSummary()
+            .then(setSummary)
+            .catch(err => notify(err.message || 'Failed to load dashboard', 'error'))
+            .finally(() => setLoading(false));
     }, [notify]);
 
     const userName = user?.name || 'User';
-
-    const score = latestAnalysis?.ats_score || 0;
-    const scoreColor = score >= 75 ? 'var(--green)' : score >= 50 ? 'var(--gold)' : 'var(--red)';
-    const scoreLabel = score >= 75 ? 'Excellent' : score >= 50 ? 'Needs Improvement' : 'Poor Match';
-
-    const statCards = [
-        { label: 'Resumes Uploaded', sub: 'Total Documents', icon: 'file', value: resumes.length, color: '#3b82f6' },
-        { label: 'Skills Detected', sub: 'Unique Keywords', icon: 'zap', value: latestAnalysis?.extracted_skills?.length || 0, color: '#22c55e' },
-        { label: 'Skill Gaps', sub: 'Missing Requirements', icon: 'info', value: latestAnalysis?.gap_skills?.length || 0, color: '#f59e0b' },
-        { label: 'Predicted Match', sub: 'Target Role', icon: 'target', value: latestAnalysis?.predicted_roles?.[0] ? `${Math.round(latestAnalysis.predicted_roles[0].score)}%` : '—', color: '#9333ea' },
-    ];
-
-    const viewAnalysis = (r) => {
-        navigate(`/analysis`);
-    };
+    const s = summary || {};
+    // Pass 1 during loading so wizard doesn't flash before data arrives
+    const { show: showOnboarding, dismiss: dismissOnboarding } = useOnboarding(loading ? 1 : (s.total_resumes ?? 0));
 
     if (loading) {
         return (
-            <div style={{ display: 'flex', alignItems: 'center', justifyItems: 'center', height: '100%', width: '100%', color: 'var(--text3)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text3)' }}>
                 Loading dashboard...
             </div>
         );
     }
+    const careerHealth = s.career_health ?? 0;
+    const healthLabel = s.career_health_label ?? 'No Data';
+    const atsScore = s.ats_score;
+    const interviewAvg = s.interview_avg;
+    const bestMatch = s.best_match_score;
+
+    const statCards = [
+        { label: 'Resumes Uploaded', sub: 'Total Documents', icon: 'file', value: s.total_resumes ?? 0, color: '#3b82f6' },
+        { label: 'Skills Detected', sub: 'Unique Keywords', icon: 'zap', value: s.skills_detected ?? 0, color: '#22c55e' },
+        { label: 'Skill Gaps', sub: 'Missing Requirements', icon: 'info', value: s.gaps_count ?? 0, color: '#f59e0b' },
+        { label: 'Job Matches', sub: 'Sessions Run', icon: 'target', value: s.total_matches ?? 0, color: '#9333ea' },
+    ];
+
+    const subStats = [
+        { label: 'ATS Score', value: atsScore != null ? `${Math.round(atsScore)}` : '—', unit: '/100', color: atsScore >= 75 ? 'var(--green)' : atsScore >= 50 ? 'var(--gold)' : 'var(--red)' },
+        { label: 'Interview Avg', value: interviewAvg != null ? `${interviewAvg}` : '—', unit: '/10', color: interviewAvg >= 7 ? 'var(--green)' : interviewAvg >= 5 ? 'var(--gold)' : 'var(--red)' },
+        { label: 'Best Job Match', value: bestMatch != null ? `${Math.round(bestMatch)}` : '—', unit: '%', color: bestMatch >= 70 ? 'var(--green)' : bestMatch >= 45 ? 'var(--gold)' : 'var(--red)' },
+    ];
 
     return (
+        <>
+        {showOnboarding && (
+            <OnboardingWizard
+                userName={userName}
+                onDismiss={dismissOnboarding}
+            />
+        )}
         <div className="fade-up">
 
-            {/* Hero Card — matches "Main account" card */}
+            {/* ── Hero Card ── */}
             <div style={{
                 background: 'var(--bg2)',
                 border: '1px solid var(--border)',
                 borderRadius: 16,
                 padding: '28px 32px',
-                marginBottom: 24,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                marginBottom: 20,
+                display: 'flex', alignItems: 'center', gap: 32,
             }}>
-                <div>
-                    <p style={{ color: 'var(--text3)', fontSize: 12, marginBottom: 6 }}>Career Profile</p>
-                    <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: 'white' }}>
+                {/* Health Gauge */}
+                <HealthGauge score={careerHealth} label={healthLabel} />
+
+                {/* Name + sub-stats + actions */}
+                <div style={{ flex: 1 }}>
+                    <p style={{ color: 'var(--text3)', fontSize: 12, marginBottom: 4 }}>Career Profile</p>
+                    <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: 'white', marginBottom: 16 }}>
                         {userName}
                     </h2>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0 20px' }}>
-                        <span style={{ color: 'var(--text3)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                            {latestAnalysis ? `#${latestAnalysis.analysis_id}` : '—'}
-                        </span>
+
+                    {/* Sub-stats row */}
+                    <div style={{ display: 'flex', gap: 24, marginBottom: 20 }}>
+                        {subStats.map(stat => (
+                            <div key={stat.label} style={{
+                                padding: '10px 16px',
+                                background: 'rgba(255,255,255,0.03)',
+                                border: '1px solid var(--border2)',
+                                borderRadius: 10,
+                                minWidth: 90,
+                            }}>
+                                <p style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    {stat.label}
+                                </p>
+                                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 20, fontWeight: 700, color: stat.value === '—' ? 'var(--text3)' : stat.color }}>
+                                    {stat.value}
+                                    {stat.value !== '—' && (
+                                        <span style={{ fontSize: 12, opacity: 0.6, marginLeft: 2 }}>{stat.unit}</span>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
                     </div>
-                    <div style={{ display: 'flex', gap: 12 }}>
+
+                    {/* Action buttons */}
+                    <div style={{ display: 'flex', gap: 10 }}>
                         <button className="dash-btn-purple" onClick={() => navigate('/upload')}>
                             Upload Resume
                         </button>
                         <button className="dash-btn-ghost" onClick={() => navigate('/analysis')}>
                             View Analysis
                         </button>
+                        <button className="dash-btn-ghost" onClick={() => navigate('/jobs')}>
+                            Match a Job
+                        </button>
+                        <button className="dash-btn-ghost" onClick={() => navigate('/interview')}>
+                            Practice Interview
+                        </button>
                     </div>
-                </div>
-
-                <div style={{ textAlign: 'right' }}>
-                    <p style={{ color: 'var(--text3)', fontSize: 12, marginBottom: 8 }}>Latest ATS Score</p>
-                    <div style={{
-                        fontFamily: 'var(--font-mono)', fontSize: 48, fontWeight: 700,
-                        color: scoreColor, lineHeight: 1,
-                    }}>
-                        {latestAnalysis ? Math.round(latestAnalysis.ats_score) : '—'}
-                        <span style={{ fontSize: 24, opacity: 0.5 }}>/100</span>
-                    </div>
-                    <span style={{ fontSize: 13, color: scoreColor, marginTop: 6, display: 'block' }}>
-                        {scoreLabel}
-                    </span>
                 </div>
             </div>
 
-            {/* 4 Stat cards — like bank account cards */}
-            <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
-                gap: 16, marginBottom: 24,
-            }}>
+            {/* ── Stat Cards ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 20 }}>
                 {statCards.map(card => (
                     <div key={card.label} style={{
                         background: 'var(--bg2)',
@@ -142,154 +206,169 @@ export default function DashboardPage() {
                                 <Icon name={card.icon} size={18} color={card.color} />
                             </div>
                         </div>
-                        <div style={{
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: 26, fontWeight: 600, color: card.color,
-                        }}>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 26, fontWeight: 600, color: card.color }}>
                             {card.value}
                         </div>
                     </div>
                 ))}
             </div>
 
-            {/* Bottom row — 2 columns */}
+            {/* ── Bottom Row: Activity Feed + Next Steps ── */}
             <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 20 }}>
 
-                {/* Latest Resumes — matches "Latest transactions" */}
+                {/* Activity Feed */}
                 <div style={{
                     background: 'var(--bg2)',
                     border: '1px solid var(--border)',
                     borderRadius: 14, padding: '24px',
                 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                        <span style={{ fontWeight: 600, color: 'white', fontSize: 16 }}>Latest Resumes</span>
-                        <button onClick={() => navigate('/resumes')} style={{
-                            width: 32, height: 32, borderRadius: '50%',
-                            background: 'var(--bg3)',
-                            border: '1px solid var(--border)',
-                            color: 'white', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>→</button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                        <span style={{ fontWeight: 600, color: 'white', fontSize: 15 }}>Recent Activity</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
+                            All modules
+                        </span>
                     </div>
-                    {/* Resume rows like transaction rows */}
-                    {resumes.slice(0, 5).map((r, i) => (
-                        <div key={r.id} style={{
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            padding: '12px 0',
-                            borderBottom: i < Math.min(resumes.length, 5) - 1
-                                ? '1px solid var(--border2)' : 'none',
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                <div style={{
-                                    width: 36, height: 36, borderRadius: 8,
-                                    background: 'rgba(147,51,234,0.15)',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                }}>
-                                    <Icon name="file" size={16} color="#a855f7" />
-                                </div>
-                                <div>
-                                    <p style={{ fontSize: 14, color: 'white', fontWeight: 500 }}>{r.filename}</p>
-                                    <p style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)' }}>
-                                        {new Date(r.uploaded_at).toLocaleDateString()}
-                                    </p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={() => viewAnalysis(r)}
-                                style={{
-                                    fontSize: 12, color: '#a855f7',
-                                    background: 'rgba(147,51,234,0.1)',
-                                    border: '1px solid rgba(147,51,234,0.2)',
-                                    borderRadius: 6, padding: '4px 12px', cursor: 'pointer',
-                                }}
-                            >
-                                Analyze
-                            </button>
+
+                    {s.recent_activity && s.recent_activity.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {s.recent_activity.map((item, i) => {
+                                const cfg = ACTIVITY_CONFIG[item.type] || ACTIVITY_CONFIG.resume;
+                                const isLast = i === s.recent_activity.length - 1;
+                                return (
+                                    <div
+                                        key={i}
+                                        onClick={() => navigate(item.url)}
+                                        style={{
+                                            display: 'flex', alignItems: 'center', gap: 14,
+                                            padding: '11px 0',
+                                            borderBottom: isLast ? 'none' : '1px solid var(--border2)',
+                                            cursor: 'pointer',
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+                                        onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                                    >
+                                        {/* Icon */}
+                                        <div style={{
+                                            width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                                            background: `${cfg.color}18`,
+                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        }}>
+                                            <Icon name={cfg.icon} size={16} color={cfg.color} />
+                                        </div>
+
+                                        {/* Label + type */}
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <p style={{ fontSize: 13, color: 'white', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {item.label}
+                                            </p>
+                                            <p style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                                                {cfg.label} · {item.date ? new Date(item.date).toLocaleDateString() : '—'}
+                                            </p>
+                                        </div>
+
+                                        {/* Score badge */}
+                                        {item.score != null && (
+                                            <span style={{
+                                                fontFamily: 'var(--font-mono)', fontSize: 12,
+                                                color: cfg.color,
+                                                background: `${cfg.color}15`,
+                                                border: `1px solid ${cfg.color}30`,
+                                                borderRadius: 6, padding: '3px 9px', flexShrink: 0,
+                                            }}>
+                                                {item.type === 'interview'
+                                                    ? `${item.score}/10`
+                                                    : `${Math.round(item.score)}%`}
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
-                    ))}
-                    {resumes.length === 0 && (
+                    ) : (
                         <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text3)', fontSize: 14 }}>
-                            No resumes yet.{' '}
+                            No activity yet.{' '}
                             <span style={{ color: '#a855f7', cursor: 'pointer' }} onClick={() => navigate('/upload')}>
-                                Upload one →
+                                Upload a resume to start →
                             </span>
                         </div>
                     )}
                 </div>
 
-                {/* Skill Profile — matches "All expenses" panel */}
+                {/* Next Steps */}
                 <div style={{
                     background: 'var(--bg2)',
                     border: '1px solid var(--border)',
                     borderRadius: 14, padding: '24px',
                 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
-                        <span style={{ fontWeight: 600, color: 'white', fontSize: 16 }}>Skill Profile</span>
-                        <button onClick={() => navigate('/analysis')} style={{
-                            width: 32, height: 32, borderRadius: '50%',
-                            background: 'var(--bg3)',
-                            border: '1px solid var(--border)',
-                            color: 'white', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>→</button>
+                    <div style={{ marginBottom: 20 }}>
+                        <span style={{ fontWeight: 600, color: 'white', fontSize: 15 }}>Recommended Next Steps</span>
                     </div>
 
-                    {/* Top roles */}
-                    {latestAnalysis?.predicted_roles?.slice(0, 3).map((role, i) => (
-                        <div key={role.role} style={{ marginBottom: 14 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                                <span style={{ fontSize: 13, color: i === 0 ? 'white' : 'var(--text2)' }}>{role.role}</span>
-                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: '#a855f7' }}>
-                                    {Math.round(role.score)}%
-                                </span>
-                            </div>
-                            <div style={{ height: 5, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden' }}>
-                                <div style={{
-                                    height: '100%', width: `${role.score}%`,
-                                    background: i === 0
-                                        ? 'linear-gradient(90deg, #7c3aed, #a855f7)'
-                                        : 'rgba(147,51,234,0.4)',
-                                    borderRadius: 3,
-                                    transition: 'width 1s var(--ease)',
-                                }} />
-                            </div>
-                        </div>
-                    ))}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {(s.next_steps || []).map((step, i) => {
+                            const pcfg = PRIORITY_CONFIG[step.priority] || PRIORITY_CONFIG.medium;
+                            return (
+                                <div
+                                    key={i}
+                                    onClick={() => navigate(step.url)}
+                                    style={{
+                                        padding: '14px 16px',
+                                        background: 'rgba(255,255,255,0.02)',
+                                        border: '1px solid var(--border2)',
+                                        borderRadius: 12,
+                                        cursor: 'pointer',
+                                        transition: 'border-color 0.2s, background 0.2s',
+                                        position: 'relative',
+                                        overflow: 'hidden',
+                                    }}
+                                    onMouseEnter={e => {
+                                        e.currentTarget.style.borderColor = `${pcfg.color}40`;
+                                        e.currentTarget.style.background = `${pcfg.color}08`;
+                                    }}
+                                    onMouseLeave={e => {
+                                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)';
+                                        e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                                    }}
+                                >
+                                    {/* Priority stripe */}
+                                    <div style={{
+                                        position: 'absolute', left: 0, top: 0, bottom: 0,
+                                        width: 3,
+                                        background: pcfg.color,
+                                        borderRadius: '3px 0 0 3px',
+                                    }} />
 
-                    {/* Skill gap summary */}
-                    {latestAnalysis && (
+                                    <div style={{ paddingLeft: 8 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                            <p style={{ fontSize: 13, color: 'white', fontWeight: 600 }}>{step.label}</p>
+                                            <span style={{ fontSize: 14, color: 'var(--text3)' }}>→</span>
+                                        </div>
+                                        <p style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.5 }}>{step.desc}</p>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Top Role chip */}
+                    {s.top_role && (
                         <div style={{
-                            marginTop: 20,
-                            padding: '14px',
+                            marginTop: 20, padding: '12px 16px',
                             background: 'rgba(147,51,234,0.07)',
                             borderRadius: 10,
                             border: '1px solid rgba(147,51,234,0.15)',
+                            display: 'flex', alignItems: 'center', gap: 10,
                         }}>
-                            <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>Skill Gaps to Fill</p>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                {latestAnalysis.gap_skills?.slice(0, 4).map(s => (
-                                    <span key={s} style={{
-                                        fontSize: 11, padding: '3px 10px',
-                                        background: 'rgba(245,158,11,0.1)',
-                                        color: '#f59e0b',
-                                        border: '1px solid rgba(245,158,11,0.2)',
-                                        borderRadius: 100,
-                                        fontFamily: 'var(--font-mono)',
-                                    }}>
-                                        {s}
-                                    </span>
-                                ))}
+                            <Icon name="award" size={14} color="#a855f7" />
+                            <div>
+                                <p style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>Top Predicted Role</p>
+                                <p style={{ fontSize: 13, color: 'white', fontWeight: 600 }}>{s.top_role}</p>
                             </div>
-                        </div>
-                    )}
-
-                    {!latestAnalysis && (
-                        <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--text3)', fontSize: 14 }}>
-                            Upload a resume to see your profile
                         </div>
                     )}
                 </div>
             </div>
         </div>
+        </>
     );
 }

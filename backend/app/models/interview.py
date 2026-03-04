@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 from app.models.base import Base
@@ -11,6 +11,7 @@ class InterviewSession(Base):
     analysis_id = Column(Integer, ForeignKey("analysis.analysis_id", ondelete="CASCADE"), index=True)
     target_role = Column(String)
     overall_score = Column(Float, nullable=True)
+    practice_mode = Column(Boolean, nullable=False, default=False, server_default='0')
     started_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     analysis = relationship("AnalysisResult", back_populates="interview_sessions")
@@ -31,5 +32,6 @@ class InterviewQA(Base):
     ideal_answer = Column(Text, nullable=True)
     similarity_score = Column(Float, nullable=True)
     llm_feedback = Column(Text, nullable=True)
+    question_category = Column(String, nullable=True)
 
     session = relationship("InterviewSession", back_populates="questions")

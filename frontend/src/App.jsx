@@ -9,7 +9,12 @@ import DashboardPage from './pages/DashboardPage';
 import UploadPage from './pages/UploadPage';
 import AnalysisPage from './pages/AnalysisPage';
 import InterviewPage from './pages/InterviewPage';
+import InterviewSummaryPage from './pages/InterviewSummaryPage';
 import ResumesPage from './pages/ResumesPage';
+import RewritePage from './pages/RewritePage';
+import HistoryPage from './pages/HistoryPage';
+import JobMatchPage from './pages/JobMatchPage';
+import ReportPage from './pages/ReportPage';
 
 function ProtectedRoute({ children }) {
   const { isAuthed } = useAuth();
@@ -29,6 +34,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
+        <Route path="/report/:resumeId" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
         <Route path="/*" element={
           <ProtectedRoute>
             <AppShell>
@@ -37,7 +43,11 @@ export default function App() {
                 <Route path="upload" element={<UploadPage />} />
                 <Route path="analysis" element={<AnalysisPage />} />
                 <Route path="interview" element={<InterviewPage />} />
+                <Route path="interview/summary/:sessionId" element={<InterviewSummaryPage />} />
                 <Route path="resumes" element={<ResumesPage />} />
+                <Route path="rewrite/:resumeId" element={<RewritePage />} />
+                <Route path="history" element={<HistoryPage />} />
+                <Route path="jobs" element={<JobMatchPage />} />
               </Routes>
             </AppShell>
           </ProtectedRoute>

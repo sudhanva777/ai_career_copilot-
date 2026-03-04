@@ -1,10 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useInterview } from '../hooks/useInterview';
 import Icon from '../components/ui/Icon';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import ChatBubble from '../components/common/ChatBubble';
+
+const CATEGORY_COLORS = {
+    'Technical':       '#22d3ee',
+    'Behavioral':      '#22c55e',
+    'Situational':     '#f59e0b',
+    'Problem Solving': '#9333ea',
+    'Communication':   '#3b82f6',
+};
 
 export default function InterviewPage() {
     const {
@@ -15,26 +23,28 @@ export default function InterviewPage() {
         loading,
         roleName,
         avgScore,
+        overallScore,
         startInterview,
         sendAnswer,
         reset,
-        session
+        session,
     } = useInterview();
 
     const [selectedRole, setSelectedRole] = useState('Software Engineer');
+    const [practiceMode, setPracticeMode] = useState(false);
     const [inputText, setInputText] = useState('');
 
     const chatRef = useRef(null);
+    const navigate = useNavigate();
     const location = useLocation();
     const initialAnalysis = location.state?.analysis || null;
-    const analysisId = initialAnalysis?.analysis_id || 1; // Fallback to 1 if testing without DB
+    const analysisId = initialAnalysis?.analysis_id || 1;
 
     const roles = [
         'Software Engineer', 'Full Stack Developer', 'Data Scientist',
         'Data Engineer', 'DevOps Engineer', 'Backend Engineer', 'ML Engineer'
     ];
 
-    // Auto-scroll chat
     useEffect(() => {
         if (chatRef.current) {
             chatRef.current.scrollTo({
@@ -44,14 +54,12 @@ export default function InterviewPage() {
         }
     }, [messages, isThinking()]);
 
-    // Helper because hook 'loading' is generic
     function isThinking() {
-        // If loading and last message is user, AI is thinking
         return loading && messages.length > 0 && messages[messages.length - 1].role === 'user';
     }
 
     const handleStart = () => {
-        startInterview(selectedRole, analysisId);
+        startInterview(selectedRole, analysisId, practiceMode);
     };
 
     const handleSubmit = () => {
@@ -66,6 +74,10 @@ export default function InterviewPage() {
             handleSubmit();
         }
     };
+
+    const currentQ = session?.questions?.[currentQIdx];
+    const currentCategory = currentQ?.category || 'Technical';
+    const categoryColor = CATEGORY_COLORS[currentCategory] || '#22d3ee';
 
     // --------------------------------------------------------------------------
     // PHASE: SETUP
@@ -104,6 +116,38 @@ export default function InterviewPage() {
                         </div>
                     </div>
 
+                    {/* Practice Mode Toggle */}
+                    <div className="w-full flex items-center justify-between py-14 px-18 bg-bg2 rounded-xl border border-border2">
+                        <div className="text-left">
+                            <p className="font-body text-sm font-medium" style={{ color: 'white' }}>Practice Mode</p>
+                            <p className="font-mono text-xs text-text3 mt-2">Re-attempt any answer without restrictions</p>
+                        </div>
+                        <button
+                            onClick={() => setPracticeMode(p => !p)}
+                            style={{
+                                width: 44, height: 24,
+                                borderRadius: 12,
+                                background: practiceMode ? '#9333ea' : 'var(--bg3)',
+                                border: '1px solid',
+                                borderColor: practiceMode ? '#9333ea' : 'var(--border)',
+                                cursor: 'pointer',
+                                position: 'relative',
+                                transition: 'background 0.2s, border-color 0.2s',
+                                flexShrink: 0,
+                            }}
+                        >
+                            <span style={{
+                                position: 'absolute',
+                                top: 3, left: practiceMode ? 22 : 3,
+                                width: 16, height: 16,
+                                borderRadius: '50%',
+                                background: 'white',
+                                transition: 'left 0.2s',
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                            }} />
+                        </button>
+                    </div>
+
                     <div className="w-full flex items-center justify-center gap-24 py-16 px-24 bg-bg2 rounded-xl border border-border2 font-mono text-xs text-text2">
                         <span className="flex items-center gap-8"><Icon name="file" size={14} /> 5 Questions</span>
                         <div className="w-1 h-1 rounded-full bg-border2" />
@@ -135,10 +179,29 @@ export default function InterviewPage() {
                             <span>Session #{session?.session_id || 'X'}</span>
                             <span className="text-border2">•</span>
                             <span className="text-cyan">Q{Math.min(currentQIdx + 1, 5)}/5</span>
+                            {session?.practice_mode && (
+                                <>
+                                    <span className="text-border2">•</span>
+                                    <span style={{ color: '#9333ea' }}>Practice</span>
+                                </>
+                            )}
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-16">
+                    <div className="flex items-center gap-12">
+                        {/* Category badge */}
+                        <span style={{
+                            fontSize: 11, padding: '4px 10px',
+                            borderRadius: 100,
+                            background: `${categoryColor}18`,
+                            color: categoryColor,
+                            border: `1px solid ${categoryColor}40`,
+                            fontFamily: 'var(--font-mono)',
+                            fontWeight: 500,
+                        }}>
+                            {currentCategory}
+                        </span>
+
                         {avgScore > 0 && (
                             <span className={`px-12 py-6 rounded-full font-mono text-xs border ${avgScore >= 7 ? 'score-pill-high' : avgScore >= 5 ? 'score-pill-mid' : 'score-pill-low'}`}>
                                 AVG: {avgScore}/10
@@ -202,9 +265,28 @@ export default function InterviewPage() {
                         <span className="font-mono text-xs text-text3 tracking-wider uppercase mt-8">Overall Performance Score</span>
                     </div>
 
-                    <Button variant="primary" onClick={reset} className="mt-8">
-                        New Interview
-                    </Button>
+                    <div className="flex gap-12 mt-8">
+                        <Button variant="primary" onClick={reset}>
+                            New Interview
+                        </Button>
+                        {session?.session_id && (
+                            <button
+                                onClick={() => navigate(`/interview/summary/${session.session_id}`)}
+                                style={{
+                                    padding: '10px 20px',
+                                    background: 'rgba(147,51,234,0.1)',
+                                    border: '1px solid rgba(147,51,234,0.3)',
+                                    borderRadius: 10,
+                                    color: '#a855f7',
+                                    fontSize: 14,
+                                    cursor: 'pointer',
+                                    fontFamily: 'var(--font-body)',
+                                }}
+                            >
+                                View Full Summary →
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex flex-col gap-24">
@@ -212,18 +294,31 @@ export default function InterviewPage() {
 
                     {scores.map((s, i) => {
                         const variantClass = s.score >= 7 ? 'score-pill-high' : s.score >= 5 ? 'score-pill-mid' : 'score-pill-low';
+                        const catColor = CATEGORY_COLORS[s.category] || '#22d3ee';
 
                         return (
                             <Card key={i} className="flex flex-col gap-16" padding="24">
                                 <div className="flex items-start justify-between border-b border-border2 pb-16">
-                                    <span className="font-mono text-sm text-text2">Question #{s.qNum}</span>
+                                    <div className="flex items-center gap-10">
+                                        <span className="font-mono text-sm text-text2">Question #{s.qNum}</span>
+                                        <span style={{
+                                            fontSize: 10, padding: '3px 8px',
+                                            borderRadius: 100,
+                                            background: `${catColor}18`,
+                                            color: catColor,
+                                            border: `1px solid ${catColor}40`,
+                                            fontFamily: 'var(--font-mono)',
+                                        }}>
+                                            {s.category}
+                                        </span>
+                                    </div>
                                     <span className={`px-12 py-4 rounded-full font-mono text-xs border ${variantClass}`}>
                                         Score: {s.score}/10
                                     </span>
                                 </div>
 
                                 <h4 className="font-body font-bold text-[15px] leading-relaxed">
-                                    {s.question.replace(/^\*\*.*?\*\*/, '')} {/* Strip markdown bolding if present */}
+                                    {s.question.replace(/^\*\*.*?\*\*/, '')}
                                 </h4>
 
                                 <div className="flex flex-col gap-12 mt-4">

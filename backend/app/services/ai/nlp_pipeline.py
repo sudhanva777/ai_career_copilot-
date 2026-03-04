@@ -91,6 +91,48 @@ except OSError:
         "Install it before running the server."
     )
 
+def extract_jd_skills(jd_text: str) -> list[str]:
+    """Extract skills from a job description using the same embedding pipeline as resume analysis.
+
+    Compares the full JD text embedding against every skill in the ontology.
+    Falls back to keyword matching if the embedding model is unavailable.
+    """
+    if not jd_text:
+        return []
+    try:
+        jd_vector = embedding_service.encode(jd_text)
+        matched = []
+        for skill, skill_vector in SKILL_EMBEDDINGS.items():
+            similarity = embedding_service.cosine_similarity(jd_vector, skill_vector)
+            if similarity > 0.35:
+                matched.append(skill)
+        return matched
+    except Exception:
+        return [s for s in SKILL_ONTOLOGY if s.lower() in jd_text.lower()]
+
+
+def compare_resume_to_jd(resume_skills: list[str], jd_skills: list[str]) -> dict:
+    """Compare resume skill names against JD skill names.
+
+    Args:
+        resume_skills: skill names already extracted from the stored analysis.
+        jd_skills: skill names extracted from the job description.
+
+    Returns:
+        {match_score: float 0-100, matched_skills: List[str], missing_skills: List[str]}
+    """
+    resume_set = set(resume_skills)
+    jd_set = set(jd_skills)
+    matched = sorted(resume_set & jd_set)
+    missing = sorted(jd_set - resume_set)
+    match_score = round((len(matched) / len(jd_set)) * 100, 1) if jd_set else 0.0
+    return {
+        "match_score": match_score,
+        "matched_skills": matched,
+        "missing_skills": missing,
+    }
+
+
 def analyze_resume(raw_text: str) -> dict:
     if not raw_text:
         return {

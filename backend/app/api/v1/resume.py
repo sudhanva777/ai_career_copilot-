@@ -4,9 +4,13 @@ from app.db.session import get_db
 from app.api.deps import get_current_user_id
 from app.services.file_service import save_upload_file
 from app.services.ai.nlp_pipeline import analyze_resume
+from app.services.ai.llm_coach import (
+    generate_rewrite_suggestions,
+    _fallback_rewrite_suggestions,
+)
 from app.models.resume import Resume
 from app.models.analysis import AnalysisResult
-from app.schemas.resume import ResumeOut, AnalysisOut
+from app.schemas.resume import ResumeOut, AnalysisOut, RewriteOut
 from typing import List
 import asyncio
 from pathlib import Path
@@ -155,12 +159,67 @@ async def upload_resume(
     }
 
 
+@router.get("/history")
+def get_history(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Return all resume versions for the current user, ordered oldest-first,
+    with ATS score, delta vs previous version, and version label (V1, V2, …).
+
+    Response: List[{resume_id, filename, uploaded_at, ats_score, delta, version_label,
+                     top_skills: List[str]}]
+    """
+    resumes = (
+        db.query(Resume)
+        .filter(Resume.user_id == user_id)
+        .order_by(Resume.upload_date.asc())
+        .all()
+    )
+
+    results = []
+    prev_score = None
+    prev_skills: set[str] = set()
+
+    for idx, resume in enumerate(resumes):
+        analysis = db.query(AnalysisResult).filter(
+            AnalysisResult.resume_id == resume.resume_id
+        ).first()
+
+        ats_score = round(analysis.ats_score, 1) if analysis else None
+        current_skills: set[str] = set()
+        if analysis and analysis.skills_json:
+            current_skills = {s["skill"] for s in analysis.skills_json if isinstance(s, dict)}
+
+        delta = None
+        if ats_score is not None and prev_score is not None:
+            delta = round(ats_score - prev_score, 1)
+
+        new_skills = sorted(current_skills - prev_skills)[:3]
+
+        results.append({
+            "resume_id": resume.resume_id,
+            "filename": resume.filename,
+            "uploaded_at": resume.upload_date.isoformat() if resume.upload_date else None,
+            "ats_score": ats_score,
+            "delta": delta,
+            "version_label": f"V{idx + 1}",
+            "new_skills": new_skills,  # up to 3 skills added vs previous version
+        })
+
+        if ats_score is not None:
+            prev_score = ats_score
+        prev_skills = current_skills
+
+    return results
+
+
 @router.get("/list", response_model=List[ResumeOut])
 def list_resumes(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    resumes = db.query(Resume).filter(Resume.user_id == user_id).all()
+    resumes = db.query(Resume).filter(Resume.user_id == user_id).order_by(Resume.resume_id.desc()).all()
     return [
         {"id": r.resume_id, "filename": r.filename, "uploaded_at": r.upload_date}
         for r in resumes
@@ -211,8 +270,90 @@ def get_analysis(
 
     return {
         "analysis_id":      analysis.analysis_id,
+        "resume_id":        analysis.resume_id,
         "ats_score":        analysis.ats_score,
         "extracted_skills": analysis.skills_json or [],     # List[{skill, score}]
         "predicted_roles":  analysis.role_pred_json or [],  # List[{role, score}]
-        "gap_skills":       analysis.gaps_json or [],        # List[str]
+        "gap_skills":       analysis.gaps_json or [],       # List[str]
+    }
+
+
+@router.post("/rewrite/{resume_id}", response_model=RewriteOut)
+async def generate_rewrite(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Generate and persist AI rewrite suggestions for a resume.
+
+    Calls Ollama with the resume text and gap skills; falls back to
+    template suggestions if Ollama is unavailable.
+    """
+    resume = db.query(Resume).filter(
+        Resume.resume_id == resume_id,
+        Resume.user_id == user_id,
+    ).first()
+    if not resume:
+        raise HTTPException(404, detail="Resume not found")
+
+    analysis = db.query(AnalysisResult).filter(
+        AnalysisResult.resume_id == resume_id
+    ).first()
+    if not analysis:
+        raise HTTPException(404, detail="Analysis not found — upload and analyse the resume first")
+
+    gap_skills: list[str] = analysis.gaps_json or []
+    ai_available = True
+
+    try:
+        suggestions = await generate_rewrite_suggestions(
+            resume_text=resume.raw_text or "",
+            gap_skills=gap_skills,
+        )
+    except RuntimeError:
+        ai_available = False
+        suggestions = _fallback_rewrite_suggestions(gap_skills)
+
+    # Persist so GET /rewrite/{id} can return without re-calling Ollama
+    analysis.rewrite_suggestions_json = [s for s in suggestions]
+    db.commit()
+
+    return {
+        "resume_id": resume_id,
+        "suggestions": suggestions,
+        "ai_available": ai_available,
+    }
+
+
+@router.get("/rewrite/{resume_id}", response_model=RewriteOut)
+def get_rewrite(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    """Return previously generated rewrite suggestions for a resume.
+
+    Returns 404 if suggestions have not been generated yet
+    (client should call POST /rewrite/{resume_id} first).
+    """
+    resume = db.query(Resume).filter(
+        Resume.resume_id == resume_id,
+        Resume.user_id == user_id,
+    ).first()
+    if not resume:
+        raise HTTPException(404, detail="Resume not found")
+
+    analysis = db.query(AnalysisResult).filter(
+        AnalysisResult.resume_id == resume_id
+    ).first()
+    if not analysis:
+        raise HTTPException(404, detail="Analysis not found for this resume")
+
+    if not analysis.rewrite_suggestions_json:
+        raise HTTPException(404, detail="No rewrite suggestions yet — call POST /resume/rewrite/{resume_id} to generate them")
+
+    return {
+        "resume_id": resume_id,
+        "suggestions": analysis.rewrite_suggestions_json,
+        "ai_available": True,
     }

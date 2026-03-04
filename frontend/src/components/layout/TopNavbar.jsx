@@ -6,6 +6,8 @@ const NAV_ITEMS = [
     { label: 'Dashboard', path: '/' },
     { label: 'Resumes', path: '/resumes' },
     { label: 'Analysis', path: '/analysis' },
+    { label: 'History', path: '/history' },
+    { label: 'Job Match', path: '/jobs' },
     { label: 'Interview', path: '/interview' },
 ];
 

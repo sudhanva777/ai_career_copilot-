@@ -23,7 +23,11 @@ export default function Icon({ name, size = 18, color = 'currentColor', classNam
         shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
         download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></>,
         clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
-        target: <><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></>
+        target: <><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></>,
+        'chevron-left': <polyline points="15 18 9 12 15 6" />,
+        'chevron-right': <polyline points="9 18 15 12 9 6" />,
+        'chevron-up': <polyline points="18 15 12 9 6 15" />,
+        'chevron-down': <polyline points="6 9 12 15 18 9" />,
     };
 
     return (

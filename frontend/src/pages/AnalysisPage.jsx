@@ -48,6 +48,10 @@ export default function AnalysisPage() {
         navigate('/interview', { state: { analysis } });
     };
 
+    const goToRewrite = () => {
+        navigate(`/rewrite/${analysis.resume_id}`);
+    };
+
     if (loading) {
         return (
             <div className="flex-1 flex items-center justify-center h-full">
@@ -90,7 +94,13 @@ export default function AnalysisPage() {
                 eyebrow="AI ANALYSIS REPORT"
                 title="Resume Analysis"
                 subtitle={<>Analysis ID: <span className="font-mono text-cyan">#{analysis.analysis_id}</span></>}
-                rightSlot={<Button variant="primary" onClick={startInterview}>Start Interview</Button>}
+                rightSlot={
+                    <div className="flex gap-12">
+                        <Button variant="secondary" onClick={goToRewrite}>Rewrite Suggestions</Button>
+                        <Button variant="secondary" onClick={() => navigate(`/report/${analysis.resume_id}`)}>Export PDF</Button>
+                        <Button variant="primary" onClick={startInterview}>Start Interview</Button>
+                    </div>
+                }
             />
 
             <div className="flex flex-col gap-32">
@@ -181,9 +191,19 @@ export default function AnalysisPage() {
                         </Card>
 
                         <Card className="flex flex-col gap-16">
-                            <h3 className="font-mono text-sm tracking-wider text-text2 uppercase flex items-center gap-12">
-                                Skill Gaps <Badge label="Focus Areas" variant="warning" />
-                            </h3>
+                            <div className="flex items-center justify-between">
+                                <h3 className="font-mono text-sm tracking-wider text-text2 uppercase flex items-center gap-12">
+                                    Skill Gaps <Badge label="Focus Areas" variant="warning" />
+                                </h3>
+                                {analysis.gap_skills?.length > 0 && (
+                                    <button
+                                        onClick={goToRewrite}
+                                        className="font-mono text-[11px] text-cyan tracking-wider uppercase hover:opacity-80 transition-opacity"
+                                    >
+                                        Fix these →
+                                    </button>
+                                )}
+                            </div>
                             <div className="flex flex-wrap gap-8">
                                 {analysis.gap_skills?.length > 0 ? (
                                     analysis.gap_skills.map((gap, idx) => (
@@ -197,6 +217,65 @@ export default function AnalysisPage() {
 
                     </div>
                 </div>
+
+                {/* Skill Confidence Breakdown */}
+                {analysis.extracted_skills && analysis.extracted_skills.length > 0 && (
+                    <Card className="flex flex-col gap-20 fade-up-4">
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <h3 className="font-mono text-sm tracking-wider text-text2 uppercase">Skill Confidence Breakdown</h3>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>
+                                {analysis.extracted_skills.length} skills · sorted by match strength
+                            </span>
+                        </div>
+
+                        {/* 2-col grid of bars */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 40px' }}>
+                            {[...analysis.extracted_skills]
+                                .sort((a, b) => b.score - a.score)
+                                .map((item, i) => {
+                                    const pct = Math.round((item.score ?? 0) * 100);
+                                    const color = pct >= 80 ? 'var(--green)'
+                                        : pct >= 65 ? '#22d3ee'
+                                        : 'var(--gold)';
+                                    return (
+                                        <div key={i}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                                                <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>
+                                                    {item.skill ?? item}
+                                                </span>
+                                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color, fontWeight: 600 }}>
+                                                    {pct}%
+                                                </span>
+                                            </div>
+                                            <div style={{ height: 5, background: 'var(--bg3)', borderRadius: 3, overflow: 'hidden' }}>
+                                                <div style={{
+                                                    height: '100%',
+                                                    width: `${pct}%`,
+                                                    background: color,
+                                                    borderRadius: 3,
+                                                    transition: 'width 1.2s cubic-bezier(0.4,0,0.2,1)',
+                                                }} />
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                        </div>
+
+                        {/* Legend */}
+                        <div style={{ display: 'flex', gap: 24, paddingTop: 12, borderTop: '1px solid var(--border2)' }}>
+                            {[
+                                { color: 'var(--green)', label: '≥80%  Strong match' },
+                                { color: '#22d3ee', label: '65–79%  Good match' },
+                                { color: 'var(--gold)', label: '<65%  Partial match' },
+                            ].map(l => (
+                                <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                                    <div style={{ width: 10, height: 10, borderRadius: 2, background: l.color, flexShrink: 0 }} />
+                                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text3)' }}>{l.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </Card>
+                )}
 
             </div>
         </div>
