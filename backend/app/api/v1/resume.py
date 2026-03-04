@@ -349,7 +349,7 @@ def get_rewrite(
     if not analysis:
         raise HTTPException(404, detail="Analysis not found for this resume")
 
-    if not analysis.rewrite_suggestions_json:
+    if analysis.rewrite_suggestions_json is None:
         raise HTTPException(404, detail="No rewrite suggestions yet — call POST /resume/rewrite/{resume_id} to generate them")
 
     return {
