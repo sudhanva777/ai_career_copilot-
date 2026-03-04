@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getRewrite, generateRewrite } from '../api/resume';
+import { getRewrite, generateRewrite, previewUpdatedResume, exportUpdatedResume } from '../api/resume';
 import { useNotify } from '../hooks/useNotify';
 import PageHeader from '../components/layout/PageHeader';
 import Card from '../components/ui/Card';
@@ -153,16 +153,27 @@ export default function RewritePage() {
     const [generating, setGenerating] = useState(false);
     const [applied, setApplied] = useState(new Set());      // indices of applied suggestions
 
+    // Preview & export state
+    const [checkedIndices, setCheckedIndices] = useState(new Set());
+    const [previewText, setPreviewText] = useState('');
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const previewAbortRef = useRef(null);
+
     const loadExisting = useCallback(async () => {
         setLoading(true);
         try {
             const data = await getRewrite(resumeId);
-            setSuggestions(data.suggestions);
-            setAiAvailable(data.ai_available ?? true);
-        } catch (err) {
-            if (err.status === 404) {
-                // Not generated yet — show the generate prompt
+            // status="not_generated" means POST /rewrite has never been called
+            if (data.status === 'not_generated') {
                 setSuggestions(null);
+            } else {
+                setSuggestions(data.suggestions);
+                setAiAvailable(data.ai_available ?? true);
+            }
+        } catch (err) {
+            // 404 = resume or analysis not found (not a race condition)
+            if (err.status === 404) {
+                notify(err.message || 'Resume not found', 'error');
             } else {
                 notify(err.message || 'Failed to load suggestions', 'error');
             }
@@ -175,6 +186,48 @@ export default function RewritePage() {
         loadExisting();
     }, [loadExisting]);
 
+    // Initialise checked state when suggestions load: HIGH+MEDIUM checked, LOW unchecked
+    useEffect(() => {
+        if (!suggestions) return;
+        const initial = new Set(
+            suggestions
+                .map((s, i) => ({ s, i }))
+                .filter(({ s }) => s.severity === 'high' || s.severity === 'medium')
+                .map(({ i }) => i)
+        );
+        setCheckedIndices(initial);
+        setPreviewText('');
+    }, [suggestions]);
+
+    // Fetch preview whenever checked selection changes
+    useEffect(() => {
+        if (!suggestions || suggestions.length === 0) return;
+
+        // Cancel any in-flight request
+        const token = {};
+        previewAbortRef.current = token;
+
+        const indices = [...checkedIndices];
+        if (indices.length === 0) {
+            setPreviewText('');
+            return;
+        }
+
+        setPreviewLoading(true);
+        previewUpdatedResume(resumeId, indices)
+            .then((data) => {
+                if (previewAbortRef.current !== token) return;
+                setPreviewText(data.preview_text || '');
+            })
+            .catch(() => {
+                if (previewAbortRef.current !== token) return;
+                setPreviewText('');
+            })
+            .finally(() => {
+                if (previewAbortRef.current === token) setPreviewLoading(false);
+            });
+    }, [checkedIndices, suggestions, resumeId]);
+
     const handleGenerate = async () => {
         setGenerating(true);
         try {
@@ -182,6 +235,7 @@ export default function RewritePage() {
             setSuggestions(data.suggestions);
             setAiAvailable(data.ai_available ?? true);
             setApplied(new Set());
+            setPreviewText('');
             if (!data.ai_available) {
                 notify('AI service offline — showing template suggestions', 'warning');
             }
@@ -319,6 +373,104 @@ export default function RewritePage() {
                     />
                 ))}
             </div>
+
+            {/* ── Updated Resume Preview & Export ─────────────────── */}
+            {suggestions.length > 0 && (
+                <div className="glass-card mt-40 fade-up-5" style={{ padding: '28px 32px' }}>
+                    <div className="mb-24">
+                        <h2 className="font-display font-bold text-lg text-text mb-4">
+                            Your Updated Resume
+                        </h2>
+                        <p className="font-body text-sm text-text3">
+                            Select which improvements to apply, then download your improved resume as a PDF.
+                        </p>
+                    </div>
+
+                    {/* Checklist */}
+                    <div className="flex flex-col gap-10 mb-28">
+                        {suggestions.map((s, i) => {
+                            const severityCfg = SEVERITY_CONFIG[s.severity] || SEVERITY_CONFIG.medium;
+                            const checked = checkedIndices.has(i);
+                            return (
+                                <label
+                                    key={i}
+                                    className="flex items-center gap-12 cursor-pointer"
+                                    style={{ userSelect: 'none' }}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={() => {
+                                            setCheckedIndices(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(i)) next.delete(i);
+                                                else next.add(i);
+                                                return next;
+                                            });
+                                        }}
+                                        style={{ width: '16px', height: '16px', accentColor: 'var(--purple)', cursor: 'pointer' }}
+                                    />
+                                    <span className="font-body text-sm text-text2">
+                                        <span className={`font-semibold ${SECTION_COLORS[s.section] || 'text-text2'}`}>
+                                            {s.section}
+                                        </span>
+                                        {' — '}
+                                        <Badge label={severityCfg.label} variant={severityCfg.variant} />
+                                    </span>
+                                </label>
+                            );
+                        })}
+                    </div>
+
+                    {/* Preview panel */}
+                    <div className="mb-24">
+                        <span
+                            className="font-mono text-[10px] tracking-widest uppercase mb-8 block"
+                            style={{ color: 'var(--text3)' }}
+                        >
+                            Preview
+                        </span>
+                        <div
+                            style={{
+                                background: '#fff',
+                                color: '#111',
+                                fontFamily: 'monospace',
+                                fontSize: '12px',
+                                lineHeight: '1.6',
+                                padding: '20px',
+                                border: '1px solid #333',
+                                borderRadius: '8px',
+                                minHeight: '180px',
+                                maxHeight: '400px',
+                                overflowY: 'auto',
+                                whiteSpace: 'pre-wrap',
+                            }}
+                        >
+                            {previewLoading ? (
+                                <div className="flex items-center justify-center" style={{ minHeight: '120px' }}>
+                                    <Spinner size={28} className="text-cyan" />
+                                </div>
+                            ) : checkedIndices.size === 0 ? (
+                                <span style={{ color: '#999' }}>
+                                    Select suggestions above to see your updated resume
+                                </span>
+                            ) : (
+                                previewText
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Download button */}
+                    <Button
+                        variant="primary"
+                        disabled={checkedIndices.size === 0}
+                        onClick={() => window.open(exportUpdatedResume(resumeId, [...checkedIndices]), '_blank')}
+                        style={checkedIndices.size === 0 ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
+                    >
+                        Download Updated Resume ({checkedIndices.size} improvement{checkedIndices.size === 1 ? '' : 's'} applied)
+                    </Button>
+                </div>
+            )}
 
             {/* Bottom CTA */}
             <div

@@ -27,11 +27,13 @@ export default function InterviewSummaryPage() {
     const [openQA, setOpenQA] = useState(null);
 
     useEffect(() => {
+        let cancelled = false;
         getSessionSummary(sessionId)
-            .then(setSummary)
-            .catch(err => notify(err.message || 'Failed to load summary', 'error'))
-            .finally(() => setLoading(false));
-    }, [sessionId]);
+            .then(data => { if (!cancelled) setSummary(data); })
+            .catch(err => { if (!cancelled) notify(err.message || 'Failed to load summary', 'error'); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, [sessionId, notify]);
 
     if (loading) {
         return (

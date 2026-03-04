@@ -23,6 +23,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db():
+    """Database session dependency — yield a session, close it on exit."""
     db = SessionLocal()
     try:
         yield db

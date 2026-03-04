@@ -46,13 +46,17 @@ export default function ReportPage() {
     const [error, setError] = useState(null);
 
     useEffect(() => {
+        let cancelled = false;
         Promise.all([
             getAnalysis(resumeId),
             getDashboardSummary(),
         ])
-            .then(([a, s]) => { setAnalysis(a); setSummary(s); })
-            .catch(err => setError(err.message || 'Failed to load report'))
-            .finally(() => setLoading(false));
+            .then(([a, s]) => {
+                if (!cancelled) { setAnalysis(a); setSummary(s); }
+            })
+            .catch(err => { if (!cancelled) setError(err.message || 'Failed to load report'); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
     }, [resumeId]);
 
     if (loading) {

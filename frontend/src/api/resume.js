@@ -22,3 +22,14 @@ export const generateRewrite = (resumeId) =>
 
 export const getHistory = () =>
     apiFetch('/resume/history');
+
+export const previewUpdatedResume = (resumeId, appliedIndices) =>
+    apiFetch(`/resume/preview/${resumeId}`, {
+        method: 'POST',
+        body: JSON.stringify({ applied_indices: appliedIndices }),
+    });
+
+export const exportUpdatedResume = (resumeId, appliedIndices) => {
+    const ids = appliedIndices.join(',');
+    return `/api/v1/resume/export-updated/${resumeId}?applied_ids=${ids}`;
+};

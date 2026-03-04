@@ -102,15 +102,18 @@ export default function JobMatchPage() {
     const [pageLoading, setPageLoading] = useState(true);
 
     useEffect(() => {
+        let cancelled = false;
         Promise.all([listResumes(), getMatches()])
             .then(([r, m]) => {
+                if (cancelled) return;
                 const resumeList = r || [];
                 setResumes(resumeList);
                 if (resumeList.length > 0) setSelectedResumeId(String(resumeList[0].id));
                 setHistory(m || []);
             })
-            .catch(err => notify(err.message || 'Failed to load data', 'error'))
-            .finally(() => setPageLoading(false));
+            .catch(err => { if (!cancelled) notify(err.message || 'Failed to load data', 'error'); })
+            .finally(() => { if (!cancelled) setPageLoading(false); });
+        return () => { cancelled = true; };
     }, [notify]);
 
     const handleSubmit = async () => {

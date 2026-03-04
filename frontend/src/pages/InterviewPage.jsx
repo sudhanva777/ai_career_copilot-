@@ -45,6 +45,8 @@ export default function InterviewPage() {
         'Data Engineer', 'DevOps Engineer', 'Backend Engineer', 'ML Engineer'
     ];
 
+    const isThinking = loading && messages.length > 0 && messages[messages.length - 1]?.role === 'user';
+
     useEffect(() => {
         if (chatRef.current) {
             chatRef.current.scrollTo({
@@ -52,11 +54,7 @@ export default function InterviewPage() {
                 behavior: 'smooth'
             });
         }
-    }, [messages, isThinking()]);
-
-    function isThinking() {
-        return loading && messages.length > 0 && messages[messages.length - 1].role === 'user';
-    }
+    }, [messages, isThinking]);
 
     const handleStart = () => {
         startInterview(selectedRole, analysisId, practiceMode);
@@ -216,7 +214,7 @@ export default function InterviewPage() {
                         {messages.map((msg, i) => (
                             <ChatBubble key={i} role={msg.role} message={msg.text} score={msg.score} />
                         ))}
-                        {isThinking() && <ChatBubble role="ai" isThinking={true} />}
+                        {isThinking && <ChatBubble role="ai" isThinking={true} />}
                     </div>
                 </div>
 

@@ -21,28 +21,38 @@ export default function AnalysisPage() {
     const notify = useNotify();
 
     useEffect(() => {
+        let cancelled = false;
+
         async function fetchLatestAnalysis() {
             try {
+                // If navigated with a specific resumeId, use it
+                if (location.state?.resumeId) {
+                    const data = await getAnalysis(location.state.resumeId);
+                    if (!cancelled) setAnalysis(data);
+                    return;
+                }
                 const resumes = await listResumes();
                 if (resumes && resumes.length > 0) {
                     const latest = await getAnalysis(resumes[0].id);
-                    setAnalysis(latest);
+                    if (!cancelled) setAnalysis(latest);
                 }
             } catch (err) {
-                notify(err.message || 'Failed to load analysis', 'error');
+                if (!cancelled) notify(err.message || 'Failed to load analysis', 'error');
             } finally {
-                setLoading(false);
+                if (!cancelled) setLoading(false);
             }
         }
 
-        // Determine target analysis
+        // If navigated with pre-fetched analysis data, use it directly
         if (location.state?.analysis) {
             setAnalysis(location.state.analysis);
             setLoading(false);
         } else {
             fetchLatestAnalysis();
         }
-    }, [location, notify]);
+
+        return () => { cancelled = true; };
+    }, [location.state, notify]);
 
     const startInterview = () => {
         navigate('/interview', { state: { analysis } });

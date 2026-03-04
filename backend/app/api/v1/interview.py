@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.db.session import get_db
 from app.api.deps import get_current_user_id
 from app.services.ai.llm_coach import generate_questions, evaluate_answer, _VALID_CATEGORIES
@@ -220,7 +220,7 @@ async def get_interview_stats(
 
     total_sessions = len(sessions)
 
-    now_utc = datetime.utcnow()
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC for DB comparison
     one_week_ago = now_utc - timedelta(days=7)
     sessions_this_week = sum(
         1 for s in sessions
@@ -230,7 +230,7 @@ async def get_interview_stats(
     scored = [s.overall_score for s in sessions if s.overall_score is not None]
     avg_score = round(sum(scored) / len(scored), 1) if scored else None
 
-    today = now_utc.date()
+    today = now_utc.date()  # naive UTC date
     day_set = {s.started_at.date() for s in sessions if s.started_at is not None}
     streak = 0
     check_date = today

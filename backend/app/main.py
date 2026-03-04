@@ -48,6 +48,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,  # Cache preflight for 24 hours — reduces OPTIONS round-trips
 )
 
 # ── Routers ───────────────────────────────────────────────────────
@@ -76,8 +77,8 @@ async def health():
         db.execute(__import__("sqlalchemy").text("SELECT 1"))
         db.close()
         status["db"] = "ok"
-    except Exception as exc:
-        status["db"] = f"error: {exc}"
+    except Exception:
+        status["db"] = "error"
         status["status"] = "degraded"
 
     # ── Check Ollama ─────────────────────────────────────────────
@@ -87,16 +88,16 @@ async def health():
             status["ollama"] = "ok" if r.status_code == 200 else f"http {r.status_code}"
             if r.status_code != 200:
                 status["status"] = "degraded"
-    except Exception as exc:
-        status["ollama"] = f"error: {exc}"
+    except Exception:
+        status["ollama"] = "error"
         status["status"] = "degraded"
 
     # ── Check NLP ────────────────────────────────────────────────
     try:
         from app.services.ai.nlp_pipeline import nlp
         status["nlp"] = "ok" if nlp else "not loaded"
-    except Exception as exc:
-        status["nlp"] = f"error: {exc}"
+    except Exception:
+        status["nlp"] = "error"
         status["status"] = "degraded"
 
     return status

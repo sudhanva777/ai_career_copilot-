@@ -14,10 +14,12 @@ class EmbeddingService:
 
     @staticmethod
     def cosine_similarity(vec1, vec2) -> float:
-        return float(
-            np.dot(vec1, vec2) /
-            (np.linalg.norm(vec1) * np.linalg.norm(vec2))
-        )
+        """Compute cosine similarity; returns 0.0 if either vector is a zero vector."""
+        norm1 = np.linalg.norm(vec1)
+        norm2 = np.linalg.norm(vec2)
+        if norm1 == 0.0 or norm2 == 0.0:
+            return 0.0
+        return float(np.dot(vec1, vec2) / (norm1 * norm2))
 
 
 # Singleton instance

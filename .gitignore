@@ -3,24 +3,54 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pyo
 
 # Virtual Environments
 venv/
 backend/venv/
 env/
+.venv/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
 
-# HuggingFace Cache
+# HuggingFace / Sentence-Transformers Cache
 .cache/
+backend/.cache/
 
 # SQLite
 *.db
+
+# Environment files — NEVER commit secrets
+.env
+backend/.env
+.env.local
+.env.production
+
+# Uploaded files — user data, not for version control
+uploads/
+backend/uploads/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Build artifacts
+dist/
+build/
+frontend/dist/
+
+# Node
+node_modules/
+frontend/node_modules/

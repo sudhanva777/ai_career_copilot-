@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, HttpUrl
 from typing import Optional
 import httpx
+from urllib.parse import urlparse
 
 from app.db.session import get_db
 from app.api.deps import get_current_user_id
@@ -15,6 +16,7 @@ router = APIRouter()
 
 _URL_FETCH_TIMEOUT = 15.0
 _MAX_JD_CHARS = 10_000   # truncate very long job descriptions
+_ALLOWED_SCHEMES = {"http", "https"}
 
 
 # ── Request / response schemas ─────────────────────────────────────────────
@@ -28,6 +30,12 @@ class JobMatchRequest(BaseModel):
     def check_jd_provided(self):
         if not self.jd_text and not self.jd_url:
             raise ValueError("Provide either jd_text or jd_url.")
+        if self.jd_url:
+            parsed = urlparse(self.jd_url)
+            if parsed.scheme not in _ALLOWED_SCHEMES:
+                raise ValueError("URL must use http or https scheme.")
+            if not parsed.netloc:
+                raise ValueError("URL must include a valid hostname.")
         return self
 
 

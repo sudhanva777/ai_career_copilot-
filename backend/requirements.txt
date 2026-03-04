@@ -38,6 +38,9 @@ requests==2.32.5
 # HTML Parsing (Job Description URL fetching)
 beautifulsoup4==4.12.3
 
+# PDF report generation (Career Report Export)
+reportlab==4.2.5
+
 # Rate Limiting
 slowapi==0.1.9
 

@@ -22,8 +22,15 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 COPY . .
 
-RUN mkdir -p uploads
+# Create uploads dir and non-root user for security
+RUN mkdir -p uploads && \
+    addgroup --system appgroup && \
+    adduser --system --ingroup appgroup appuser && \
+    chown -R appuser:appgroup /app
+
+USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Use workers=1 in production; --reload only for development
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

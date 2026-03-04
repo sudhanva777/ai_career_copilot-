@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
+from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy.orm import Session, joinedload
 from app.db.session import get_db
 from app.api.deps import get_current_user_id
 from app.services.file_service import save_upload_file
@@ -11,8 +12,10 @@ from app.services.ai.llm_coach import (
 from app.models.resume import Resume
 from app.models.analysis import AnalysisResult
 from app.schemas.resume import ResumeOut, AnalysisOut, RewriteOut
+from pydantic import BaseModel
 from typing import List
 import asyncio
+import io
 from pathlib import Path
 
 router = APIRouter()
@@ -173,6 +176,7 @@ def get_history(
     resumes = (
         db.query(Resume)
         .filter(Resume.user_id == user_id)
+        .options(joinedload(Resume.analysis_results))
         .order_by(Resume.upload_date.asc())
         .all()
     )
@@ -182,9 +186,8 @@ def get_history(
     prev_skills: set[str] = set()
 
     for idx, resume in enumerate(resumes):
-        analysis = db.query(AnalysisResult).filter(
-            AnalysisResult.resume_id == resume.resume_id
-        ).first()
+        # Use already-loaded relationship to avoid N+1 queries
+        analysis = resume.analysis_results[0] if resume.analysis_results else None
 
         ats_score = round(analysis.ats_score, 1) if analysis else None
         current_skills: set[str] = set()
@@ -320,12 +323,13 @@ async def generate_rewrite(
 
     return {
         "resume_id": resume_id,
+        "status": "ready",
         "suggestions": suggestions,
         "ai_available": ai_available,
     }
 
 
-@router.get("/rewrite/{resume_id}", response_model=RewriteOut)
+@router.get("/rewrite/{resume_id}")
 def get_rewrite(
     resume_id: int,
     db: Session = Depends(get_db),
@@ -333,8 +337,9 @@ def get_rewrite(
 ):
     """Return previously generated rewrite suggestions for a resume.
 
-    Returns 404 if suggestions have not been generated yet
-    (client should call POST /rewrite/{resume_id} first).
+    Returns HTTP 200 with status="not_generated" if suggestions have not
+    been generated yet (avoids race-condition 404 on the frontend).
+    Client should call POST /rewrite/{resume_id} to generate them.
     """
     resume = db.query(Resume).filter(
         Resume.resume_id == resume_id,
@@ -350,10 +355,186 @@ def get_rewrite(
         raise HTTPException(404, detail="Analysis not found for this resume")
 
     if analysis.rewrite_suggestions_json is None:
-        raise HTTPException(404, detail="No rewrite suggestions yet — call POST /resume/rewrite/{resume_id} to generate them")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "resume_id": resume_id,
+                "status": "not_generated",
+                "suggestions": [],
+                "ai_available": True,
+            },
+        )
 
     return {
         "resume_id": resume_id,
+        "status": "ready",
         "suggestions": analysis.rewrite_suggestions_json,
         "ai_available": True,
     }
+
+
+# ── Preview & Export helpers ───────────────────────────────────────────────
+
+class PreviewRequest(BaseModel):
+    applied_indices: List[int]
+
+
+def _apply_suggestions(raw_text: str, suggestions: list, applied_indices: List[int]) -> str:
+    text = raw_text
+    for idx in applied_indices:
+        if 0 <= idx < len(suggestions):
+            s = suggestions[idx]
+            current = s.get("current", "")
+            improved = s.get("improved", "")
+            if current and improved:
+                text = text.replace(current, improved, 1)
+    return text
+
+
+def _generate_pdf(text: str) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.enums import TA_LEFT
+    except ImportError:
+        raise RuntimeError("reportlab is not installed")
+
+    buffer = io.BytesIO()
+    margin = 2 * cm
+    page_width, _ = A4
+
+    lines = text.split("\n")
+
+    # Find first non-empty line as title (candidate name)
+    title_line = ""
+    body_start = 0
+    for i, line in enumerate(lines):
+        if line.strip():
+            title_line = line.strip()
+            body_start = i + 1
+            break
+
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Times-Roman", 8)
+        canvas.setFillGray(0.6)
+        canvas.drawCentredString(page_width / 2, margin * 0.45, "Improved by AI Career Copilot")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=margin,
+        rightMargin=margin,
+        topMargin=margin,
+        bottomMargin=margin,
+    )
+
+    title_style = ParagraphStyle("ResumeTitle", fontName="Times-Bold", fontSize=13, leading=16, spaceAfter=10, alignment=TA_LEFT)
+    header_style = ParagraphStyle("SectionHeader", fontName="Times-Bold", fontSize=10, leading=14, spaceBefore=8, spaceAfter=2, alignment=TA_LEFT)
+    body_style = ParagraphStyle("Body", fontName="Times-Roman", fontSize=10, leading=14, alignment=TA_LEFT)
+
+    def esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def is_section_header(line: str) -> bool:
+        s = line.strip()
+        return (
+            bool(s)
+            and s == s.upper()
+            and any(c.isalpha() for c in s)
+            and len(s) <= 60
+        )
+
+    story = []
+    if title_line:
+        story.append(Paragraph(esc(title_line), title_style))
+
+    for line in lines[body_start:]:
+        stripped = line.strip()
+        if not stripped:
+            story.append(Spacer(1, 6))
+        elif is_section_header(stripped):
+            story.append(Paragraph(esc(stripped), header_style))
+        else:
+            story.append(Paragraph(esc(stripped), body_style))
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    return buffer.getvalue()
+
+
+@router.post("/preview/{resume_id}")
+def preview_updated_resume(
+    resume_id: int,
+    body: PreviewRequest,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    resume = db.query(Resume).filter(
+        Resume.resume_id == resume_id,
+        Resume.user_id == user_id,
+    ).first()
+    if not resume:
+        raise HTTPException(404, detail="Resume not found")
+
+    analysis = db.query(AnalysisResult).filter(
+        AnalysisResult.resume_id == resume_id
+    ).first()
+    if not analysis or analysis.rewrite_suggestions_json is None:
+        raise HTTPException(404, detail="No rewrite suggestions found")
+
+    preview_text = _apply_suggestions(
+        resume.raw_text or "",
+        analysis.rewrite_suggestions_json,
+        body.applied_indices,
+    )
+    return {"preview_text": preview_text}
+
+
+@router.get("/export-updated/{resume_id}")
+def export_updated_resume(
+    resume_id: int,
+    applied_ids: str = Query(default=""),
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    resume = db.query(Resume).filter(
+        Resume.resume_id == resume_id,
+        Resume.user_id == user_id,
+    ).first()
+    if not resume:
+        raise HTTPException(404, detail="Resume not found")
+
+    analysis = db.query(AnalysisResult).filter(
+        AnalysisResult.resume_id == resume_id
+    ).first()
+    if not analysis or analysis.rewrite_suggestions_json is None:
+        raise HTTPException(404, detail="No rewrite suggestions found")
+
+    applied_indices: List[int] = []
+    if applied_ids.strip():
+        try:
+            applied_indices = [int(x.strip()) for x in applied_ids.split(",") if x.strip()]
+        except ValueError:
+            raise HTTPException(400, detail="Invalid applied_ids format — use comma-separated integers")
+
+    updated_text = _apply_suggestions(
+        resume.raw_text or "",
+        analysis.rewrite_suggestions_json,
+        applied_indices,
+    )
+
+    try:
+        pdf_bytes = _generate_pdf(updated_text)
+    except RuntimeError:
+        raise HTTPException(503, detail="PDF generation unavailable — reportlab not installed")
+    except Exception:
+        raise HTTPException(500, detail="PDF generation failed")
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="updated_resume.pdf"'},
+    )

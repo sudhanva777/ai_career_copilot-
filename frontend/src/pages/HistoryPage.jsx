@@ -119,10 +119,12 @@ export default function HistoryPage() {
     const notify = useNotify();
 
     useEffect(() => {
+        let cancelled = false;
         getHistory()
-            .then(data => setHistory(data))
-            .catch(err => notify(err.message || 'Failed to load history', 'error'))
-            .finally(() => setLoading(false));
+            .then(data => { if (!cancelled) setHistory(data); })
+            .catch(err => { if (!cancelled) notify(err.message || 'Failed to load history', 'error'); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
     }, [notify]);
 
     if (loading) {

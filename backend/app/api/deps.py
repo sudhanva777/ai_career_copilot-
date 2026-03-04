@@ -1,16 +1,9 @@
 from typing import Generator, Annotated, Optional
 from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from app.db.session import SessionLocal
+from app.db.session import get_db  # canonical session factory
 from app.models.user import User
 from app.core.security import decode_token
-
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 SessionDep = Annotated[Session, Depends(get_db)]
 

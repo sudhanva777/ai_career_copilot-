@@ -67,10 +67,12 @@ export default function DashboardPage() {
     const { user } = useAuth();
 
     useEffect(() => {
+        let cancelled = false;
         getDashboardSummary()
-            .then(setSummary)
-            .catch(err => notify(err.message || 'Failed to load dashboard', 'error'))
-            .finally(() => setLoading(false));
+            .then(data => { if (!cancelled) setSummary(data); })
+            .catch(err => { if (!cancelled) notify(err.message || 'Failed to load dashboard', 'error'); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
     }, [notify]);
 
     const userName = user?.name || 'User';

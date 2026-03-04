@@ -44,7 +44,14 @@ def register(request: Request, payload: UserCreate, db: Session = Depends(get_db
 @limiter.limit("5/minute")
 def login(request: Request, payload: UserLogin, response: Response, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+    # Always call verify_password (even for missing user) to prevent timing attacks
+    # that could enumerate valid email addresses via response time differences.
+    _dummy_hash = "$2b$12$KIX1IXJEIuXs4vJ.YUz7l.BHJHX4TG/BH4B.RKN5G5BM8jO3Y8AO"
+    password_valid = verify_password(
+        payload.password,
+        user.password_hash if user else _dummy_hash
+    )
+    if not user or not password_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"

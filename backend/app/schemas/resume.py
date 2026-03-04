@@ -36,5 +36,6 @@ class RewriteSuggestion(BaseModel):
 
 class RewriteOut(BaseModel):
     resume_id: int
+    status: str = "ready"               # "ready" | "not_generated"
     suggestions: List[RewriteSuggestion]
     ai_available: bool = True
